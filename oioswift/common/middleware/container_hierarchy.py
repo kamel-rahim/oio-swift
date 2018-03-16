@@ -135,6 +135,24 @@ class ContainerHierarchyMiddleware(AutoContainerBase):
             obj = obj_parts[-1] if obj_parts else ''
         return container, obj
 
+    def _is_empty_container(self, env, account, container):
+        path = quote_plus(self.DELIMITER.join(
+            ('', 'v1', account, container)))
+        LOG.error("PATH : %s", path)
+        sub_req = make_subrequest(env.copy(), method='GET', path=path,
+                                  body='',
+                                  swift_source=self.SWIFT_SOURCE)
+        params = sub_req.params
+        params['delimiter'] = self.DELIMITER
+        params['limit'] = '10'
+        params['prefix'] = ''
+        resp = sub_req.get_response(self.app)
+        if not resp.is_success or resp.content_length == 0:
+            return True
+        items = json.loads(resp.body)
+        LOG.error(items)
+        return len(items) == 0
+
     def _recursive_listing(self, env, account, ct_parts, header_cb,
                            prefix='', recursive=True):
         """
@@ -173,12 +191,14 @@ class ContainerHierarchyMiddleware(AutoContainerBase):
             elif not recursive and 'subdir' in obj:
                 obj['subdir'] = obj_prefix + obj['subdir']
                 yield obj
-
         if recursive:
             for subdir in subdirs:
                 for obj in self._recursive_listing(
                         env, account, ct_parts + (subdir, ), header_cb):
                     yield obj
+
+    def _is_place_holder(self, obj):
+        return self.DELIMITER in obj
 
     def __call__(self, env, start_response):
         if self.should_bypass(env):
@@ -252,9 +272,16 @@ class ContainerHierarchyMiddleware(AutoContainerBase):
                 obj = obj_parts[-2] + self.DELIMITER
                 self._create_dir_marker(env2, account, ct, obj)
             container, obj = self._fake_container_and_obj(container, obj_parts)
+
         LOG.debug("%s: Converted to container=%s, obj=%s, qs=%s",
                   self.SWIFT_SOURCE, container, obj, qs)
-        if must_recurse:
+        if req.method == 'DELETE' and self._is_place_holder(obj):
+            if self._is_empty_container(
+                env, account,
+                self.ENCODED_DELIMITER.join([container, obj[:-1], ""])):
+                start_response("405 Method Not Allowed", {})
+                return []
+        elif must_recurse:
             oheaders = dict()
 
             def header_cb(header_dict):
