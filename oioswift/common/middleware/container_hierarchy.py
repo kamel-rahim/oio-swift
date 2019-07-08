@@ -87,6 +87,9 @@ class RedisDb(object):
 
         if marker == "" then
             marker = "-"
+            if prefix ~= "" then
+                marker = "[" .. prefix
+            end
         else
             marker = "[" .. marker
         end
@@ -105,13 +108,13 @@ class RedisDb(object):
                      elem = get_first_level(keys[i], prefix_len + 1,
                                             delimiter)
                  end
-
-                 -- there is no `continue` instruction on Lua
                  local check = true
                  if prefix ~= "" then
                      local index = string.find(elem, prefix)
                      if index == nil or index > 1 then
-                         check = false
+                         --check = false
+                         finish = true
+                         break
                      end
                  end
 
